@@ -13,24 +13,38 @@ def verify_signature(review_path: Path, sig_path: Path, pubkey_path: Path):
     signature = base64.b64decode(sig_path.read_text(encoding="utf-8").strip())
     public_key.verify(signature, review_path.read_bytes())
 
+def load_review(path: Path):
+    text = path.read_text(encoding="utf-8")
+    data = json.loads(text)
+    return {
+        "path": path,
+        "text": text,
+        "data": data,
+        "timestamp": data.get("timestamp_utc", ""),
+        "review_id": data.get("review_id", path.stem),
+    }
+
 def main():
     review_dir = Path("review_records")
     pubkey_path = Path("keys/ed25519_public.pem")
 
-    reviews = sorted(review_dir.glob("*.json"))
+    reviews = [load_review(p) for p in review_dir.glob("*.json")]
     if not reviews:
         raise SystemExit("No review records found.")
 
+    reviews.sort(key=lambda r: (r["timestamp"], r["review_id"]))
+
     previous_expected = "GENESIS"
-    for review_path in reviews:
+    for review in reviews:
+        review_path = review["path"]
+        data = review["data"]
+        text = review["text"]
+
         sig_path = review_path.with_suffix(review_path.suffix + ".sig")
         if not sig_path.exists():
             raise SystemExit(f"Missing signature: {sig_path}")
 
         verify_signature(review_path, sig_path, pubkey_path)
-
-        text = review_path.read_text(encoding="utf-8")
-        data = json.loads(text)
 
         current_sha = sha256_text(text)
         sha_path = Path("out/review_chain") / f"review_{data['review_id']}.sha256"
@@ -50,7 +64,7 @@ def main():
         print(f"[OK] verified review: {review_path.name}")
 
     summary = {
-        "stage": "stage271",
+        "stage": reviews[-1]["data"].get("stage", "unknown"),
         "verified_reviews": len(reviews),
         "final_chain_head": previous_expected,
         "result": "accept"
